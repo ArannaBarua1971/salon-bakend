@@ -1,6 +1,7 @@
 import express from "express"
 import cors from "cors"
 import 'dotenv/config'
+import { MongoClient, ObjectId } from "mongodb"
 
 const app = express()
 const port = 5000
@@ -21,6 +22,27 @@ export async function connectToMongoDB() {
 
 const dbClient = await connectToMongoDB();
 const db = dbClient.db("salon");
+const serviceCollections=db.collection("services")
+
+app.post("/services",async(req,res)=>{
+  await serviceCollections.insertOne(req.body)
+
+  res.send({
+    message:"Successfully service uploaded"
+  })
+})
+app.get("/services",async(req,res)=>{
+  const data=await serviceCollections.find({}).toArray()
+  res.send(data)
+})
+app.patch("/services/:id",async(req,res)=>{
+  const data=await serviceCollections.updateOne({"_id":new ObjectId(req.params.id)},{$set:req.body})
+  res.send({message:"successfully updated"})
+})
+app.delete("/services/:id",async(req,res)=>{
+  const data=await serviceCollections.deleteOne({"_id":new ObjectId(req.params.id)})
+  res.send({message:"successfully deleted"})
+})
 
 app.get('/', (req, res) => {
   res.send('Hello World!')
