@@ -131,7 +131,7 @@ app.patch("/users/:id", async (req, res) => {
     { _id: new ObjectId(req.params.id) },
     { $set: req.body },
   );
-  res.send({ message: "successfully updated" });
+  res.send({ok:true, message: "successfully updated" });
 });
 
 app.get("/", (req, res) => {
