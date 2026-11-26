@@ -2,7 +2,9 @@ import express from "express";
 import cors from "cors";
 import "dotenv/config";
 import { MongoClient, ObjectId } from "mongodb";
+import stripe from "stripe";
 
+const Stripe = new stripe(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const port = 5000;
 
@@ -24,6 +26,7 @@ const dbClient = await connectToMongoDB();
 const db = dbClient.db("salon");
 const serviceCollections = db.collection("services");
 const serviceBookingCollections = db.collection("serviceBooking");
+const transactionCollections = db.collection("transaction");
 const userCollections = db.collection("user");
 
 app.post("/services", async (req, res) => {
@@ -35,8 +38,11 @@ app.post("/services", async (req, res) => {
 });
 app.get("/services", async (req, res) => {
   const query = {};
-  if (req.query.active !== undefined)
-    [(query.active = req.query.active === "true")];
+
+  if (req.query.active !== undefined) {
+    query.active = req.query.active === "true";
+  }
+
   const data = await serviceCollections.find(query).toArray();
   res.send(data);
 });
@@ -63,20 +69,18 @@ app.get("/services/:id", async (req, res) => {
 //booking
 app.post("/bookingAppointment", async (req, res) => {
   const count = await serviceBookingCollections.countDocuments({
-    "appointmentDate": req.body.appointmentDate,
-    "timeSlot": req.body.timeSlot,
+    appointmentDate: req.body.appointmentDate,
+    timeSlot: req.body.timeSlot,
   });
   if (count) {
-    res
-      .status(409)
-      .send({
-        ok: false,
-        message: "date and time is already taken",
-      });
+    res.status(409).send({
+      ok: false,
+      message: "date and time is already taken",
+    });
     return;
   }
   const data = await serviceBookingCollections.insertOne(req.body);
-  res.send({ok: true, message: "successfully uploaded" });
+  res.send({ ok: true, message: "successfully uploaded" });
 });
 app.get("/bookingAppointment/timeslot", async (req, res) => {
   try {
@@ -97,29 +101,35 @@ app.get("/bookingAppointment/timeslot", async (req, res) => {
 
     res.send(data.map((item) => item.timeSlot));
   } catch (error) {
-    console.error(error);
     res.status(500).send({ message: "Server error" });
   }
 });
+
 //booking for admin
 app.get("/bookingAppointment", async (req, res) => {
-  const data = await serviceBookingCollections.find({}).toArray();
+  const query = {};
+  if (req.query.id !== undefined) {
+    query.customerId = req.query.id;
+  }
+  const data = await serviceBookingCollections.find(query).toArray();
   res.send(data);
 });
 app.patch("/bookingAppointment/:id", async (req, res) => {
-  console.log(req.params.id)
-  const data = await serviceBookingCollections.updateOne({"_id":new ObjectId(req.params.id)},{$set:{...req.body}})
+  const data = await serviceBookingCollections.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { ...req.body } },
+  );
   res.send({
-    ok:true,
-    message:"Booking data updated successfully"
+    ok: true,
+    message: "Booking data updated successfully",
   });
 });
 app.get("/bookingAppointment/single/:id", async (req, res) => {
-  const data = await serviceBookingCollections.findOne({"_id":new ObjectId(req.params.id)})
+  const data = await serviceBookingCollections.findOne({
+    _id: new ObjectId(req.params.id),
+  });
   res.send(data);
 });
-
-
 
 // user api
 app.get("/users", async (req, res) => {
@@ -131,7 +141,72 @@ app.patch("/users/:id", async (req, res) => {
     { _id: new ObjectId(req.params.id) },
     { $set: req.body },
   );
-  res.send({ok:true, message: "successfully updated" });
+  res.send({ ok: true, message: "successfully updated" });
+});
+
+//verify checkout
+app.post("/payments/checkout-verify", async (req, res) => {
+  const sessionId = req.body.session_id;
+
+  if (!sessionId) {
+    return res.send({ ok: false, message: "Session ID is required" });
+  }
+  try {
+    const { status, payment_status, customer_email, metadata, payment_intent } =
+      await Stripe.checkout.sessions.retrieve(sessionId);
+
+    if (status === "complete" && payment_status === "paid") {
+      // --------
+      const existingPayment = await transactionCollections.findOne({
+        _id: new ObjectId(payment_intent.id),
+      });
+      if (existingPayment) {
+        return res.send({ ok: false, message: "Payment already verified" });
+      }
+      // --------
+
+      // --------
+      const serviceActiveConfirmed = await serviceCollections.countDocuments({
+        _id: new ObjectId(metadata.serviceId),
+        active: true,
+      });
+      if (!serviceActiveConfirmed) {
+        return res.send({
+          ok: false,
+          message: "Appointment is not Activated yet by administrator",
+        });
+      }
+      //--------
+
+      // --------
+      const bookingConfirmed = await serviceBookingCollections.countDocuments({
+        _id: new ObjectId(metadata.appointmentId),
+        status:"confirmed"
+      });
+      if (!bookingConfirmed) {
+        return res.send({ ok: false, message: "Appointment is not confirmed yet by administrator" });
+      }
+      // // --------
+
+      const salonData = await serviceCollections.findOne({
+        _id: new ObjectId(metadata.serviceId),
+      });
+      const payment = {
+        serviceId:salonData._id,
+        appointmentId:metadata.appointmentId,
+        payment_id:payment_intent.id,
+        customer_email,
+        price:salonData.price,
+      };
+
+      const data = await transactionCollections.insertOne(payment);
+      const update = await serviceBookingCollections.updateOne({_id:new ObjectId(metadata.appointmentId)},{$set:{paymentStatus:"paid"}});
+      res.send({ ok: true, message: "Payment verified" });
+      return;
+    }
+  } catch (error) {
+    return res.send({ success: false, message: "Payment already verified" });
+  }
 });
 
 app.get("/", (req, res) => {
@@ -141,4 +216,4 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
-export default app
+export default app;
