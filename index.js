@@ -101,7 +101,25 @@ app.get("/bookingAppointment/timeslot", async (req, res) => {
     res.status(500).send({ message: "Server error" });
   }
 });
-app.get;
+//booking for admin
+app.get("/bookingAppointment", async (req, res) => {
+  const data = await serviceBookingCollections.find({}).toArray();
+  res.send(data);
+});
+app.patch("/bookingAppointment/:id", async (req, res) => {
+  console.log(req.params.id)
+  const data = await serviceBookingCollections.updateOne({"_id":new ObjectId(req.params.id)},{$set:{...req.body}})
+  res.send({
+    ok:true,
+    message:"Booking data updated successfully"
+  });
+});
+app.get("/bookingAppointment/single/:id", async (req, res) => {
+  const data = await serviceBookingCollections.findOne({"_id":new ObjectId(req.params.id)})
+  res.send(data);
+});
+
+
 
 // user api
 app.get("/users", async (req, res) => {
