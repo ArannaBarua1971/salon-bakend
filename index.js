@@ -42,6 +42,16 @@ app.get("/services", async (req, res) => {
   if (req.query.active !== undefined) {
     query.active = req.query.active === "true";
   }
+  if(req.query.category!==undefined){
+    query.category=req.query.category
+  }
+  if(req.query.search!==undefined){
+    query.$or=[
+      {name:{$regex:req.query.search,$options:"i"}},
+      {category:{$regex:req.query.search,$options:"i"}},
+      {description:{$regex:req.query.search,$options:"i"}}
+    ]
+  }
 
   const data = await serviceCollections.find(query).toArray();
   res.send(data);
