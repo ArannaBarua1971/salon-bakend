@@ -3,6 +3,10 @@ import cors from "cors";
 import "dotenv/config";
 import { MongoClient, ObjectId } from "mongodb";
 import stripe from "stripe";
+import {
+  createRemoteJWKSet,
+  jwtVerify,
+} from "jose";
 
 const Stripe = new stripe(process.env.STRIPE_SECRET_KEY);
 const app = express();
@@ -10,6 +14,52 @@ const port = 5000;
 
 app.use(cors());
 app.use(express.json());
+
+
+
+const verifyToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).send({
+        message: "Unauthorized",
+      });
+    }
+    
+    const token = authHeader.split(" ")[1];
+    
+    const JWKS = createRemoteJWKSet(
+      new URL(
+        `${process.env.FrontendURL}/api/auth/jwks`
+      )
+    );
+    const { payload } = await jwtVerify(
+      token,
+      JWKS
+    );
+
+    res.locals.auth = payload;
+
+    next();
+  } catch (error) {
+    return res.status(401).send({
+      message: "Invalid or expired token",
+    });
+  }
+};
+const verifyAdmin = (req, res, next) => {
+  const user = res.locals.auth;
+
+  if (!user || user.role !== "admin") {
+    return res.status(403).send({
+      message: "Forbidden: Admin access required",
+    });
+  }
+
+  next();
+};
+
 
 const client = new MongoClient(process.env.DATABASE_URL);
 export async function connectToMongoDB() {
@@ -29,7 +79,7 @@ const serviceBookingCollections = db.collection("serviceBooking");
 const transactionCollections = db.collection("transaction");
 const userCollections = db.collection("user");
 
-app.post("/services", async (req, res) => {
+app.post("/services",verifyToken,verifyAdmin, async (req, res) => {
   await serviceCollections.insertOne(req.body);
 
   res.send({
@@ -56,20 +106,20 @@ app.get("/services", async (req, res) => {
   const data = await serviceCollections.find(query).toArray();
   res.send(data);
 });
-app.patch("/services/:id", async (req, res) => {
+app.patch("/services/:id",verifyToken,verifyAdmin, async (req, res) => {
   const data = await serviceCollections.updateOne(
     { _id: new ObjectId(req.params.id) },
     { $set: req.body },
   );
   res.send({ message: "successfully updated" });
 });
-app.delete("/services/:id", async (req, res) => {
+app.delete("/services/:id",verifyToken,verifyAdmin, async (req, res) => {
   const data = await serviceCollections.deleteOne({
     _id: new ObjectId(req.params.id),
   });
   res.send({ message: "successfully deleted" });
 });
-app.get("/services/:id", async (req, res) => {
+app.get("/services/:id",verifyToken, async (req, res) => {
   const data = await serviceCollections.findOne({
     _id: new ObjectId(req.params.id),
   });
@@ -77,7 +127,7 @@ app.get("/services/:id", async (req, res) => {
 });
 
 //booking
-app.post("/bookingAppointment", async (req, res) => {
+app.post("/bookingAppointment",verifyToken, async (req, res) => {
   const count = await serviceBookingCollections.countDocuments({
     appointmentDate: req.body.appointmentDate,
     timeSlot: req.body.timeSlot,
@@ -92,7 +142,7 @@ app.post("/bookingAppointment", async (req, res) => {
   const data = await serviceBookingCollections.insertOne(req.body);
   res.send({ ok: true, message: "successfully uploaded" });
 });
-app.get("/bookingAppointment/timeslot", async (req, res) => {
+app.get("/bookingAppointment/timeslot",verifyToken, async (req, res) => {
   try {
     const { serviceId, appointmentDate } = req.query;
 
@@ -116,7 +166,7 @@ app.get("/bookingAppointment/timeslot", async (req, res) => {
 });
 
 //booking for admin
-app.get("/bookingAppointment", async (req, res) => {
+app.get("/bookingAppointment",verifyToken, async (req, res) => {
   const query = {};
   if (req.query.id !== undefined) {
     query.customerId = req.query.id;
@@ -124,7 +174,12 @@ app.get("/bookingAppointment", async (req, res) => {
   const data = await serviceBookingCollections.find(query).toArray();
   res.send(data);
 });
-app.patch("/bookingAppointment/:id", async (req, res) => {
+// need to update
+app.patch("/bookingAppointment/:id",verifyToken, async (req, res) => {
+  
+  if(req.body.status=="confirmed"){
+    verifyAdmin
+  }
   const data = await serviceBookingCollections.updateOne(
     { _id: new ObjectId(req.params.id) },
     { $set: { ...req.body } },
@@ -134,7 +189,7 @@ app.patch("/bookingAppointment/:id", async (req, res) => {
     message: "Booking data updated successfully",
   });
 });
-app.get("/bookingAppointment/single/:id", async (req, res) => {
+app.get("/bookingAppointment/single/:id",verifyToken, async (req, res) => {
   const data = await serviceBookingCollections.findOne({
     _id: new ObjectId(req.params.id),
   });
@@ -142,11 +197,11 @@ app.get("/bookingAppointment/single/:id", async (req, res) => {
 });
 
 // user api
-app.get("/users", async (req, res) => {
+app.get("/users", verifyToken,verifyAdmin,async (req, res) => {
   const data = await userCollections.find({ role: "customer" }).toArray();
   res.send(data);
 });
-app.patch("/users/:id", async (req, res) => {
+app.patch("/users/:id",verifyToken,verifyAdmin, async (req, res) => {
   const data = await userCollections.updateOne(
     { _id: new ObjectId(req.params.id) },
     { $set: req.body },
@@ -155,7 +210,7 @@ app.patch("/users/:id", async (req, res) => {
 });
 
 //verify checkout
-app.post("/payments/checkout-verify", async (req, res) => {
+app.post("/payments/checkout-verify",verifyToken, async (req, res) => {
   const sessionId = req.body.session_id;
 
   if (!sessionId) {
@@ -225,7 +280,7 @@ app.post("/payments/checkout-verify", async (req, res) => {
 });
 
 //transactions
-app.get("/transactions", async (req, res) => {
+app.get("/transactions",verifyToken,verifyAdmin, async (req, res) => {
   const data = await transactionCollections.find({}).toArray();
   res.send(data);
 });
