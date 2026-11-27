@@ -201,10 +201,15 @@ app.post("/payments/checkout-verify", async (req, res) => {
       const salonData = await serviceCollections.findOne({
         _id: new ObjectId(metadata.serviceId),
       });
+      const bookingData = await serviceBookingCollections.findOne({
+        _id: new ObjectId(metadata.appointmentId),
+      });
       const payment = {
-        serviceId:salonData._id,
-        appointmentId:metadata.appointmentId,
-        payment_id:payment_intent.id,
+        serviceName:salonData.name,
+        category:salonData.category,
+        appointmentDate:bookingData.appointmentDate,
+        appointmentTime:bookingData.timeSlot,
+        payment_id:payment_intent,
         customer_email,
         price:salonData.price,
       };
@@ -217,6 +222,12 @@ app.post("/payments/checkout-verify", async (req, res) => {
   } catch (error) {
     return res.send({ success: false, message: "Payment already verified" });
   }
+});
+
+//transactions
+app.get("/transactions", async (req, res) => {
+  const data = await transactionCollections.find({}).toArray();
+  res.send(data);
 });
 
 app.get("/", (req, res) => {
